@@ -1,0 +1,5 @@
+Add comments
+Clear problem with the alternative form of an url
+Python3 compatibility
+More testing
+Cleaning
