@@ -4,15 +4,21 @@ import argparse
 
 http = re.compile('http://')
 https = re.compile('https://')
-pattern_url = re.compile(r"(?i)(?P<proto>ftp|http|https|ssh)://((?P<user>\w+)(:(?P<password>[^:]+))?@)?(?P<hostname>[\w.-]+)(:(?P<port>[0-9]+))?/(?P<path>.+)?")
+pattern_url = re.compile(r"(?i)(?P<domain>(?P<proto>ftp|http|https|ssh)://((?P<user>\w+)(:(?P<password>[^:]+))?@)?(?P<hostname>[\w.-]+)(:(?P<port>[0-9]+))?/)(?P<path>.+)?")
 b1 = re.compile('/(?P<path>.+)')
 b2 = re.compile('\./(?P<path>.+)')
-hal_end = re.compile(r'.*hal\-[v0-9]+$')
 
 bad_links_message = """\nPage contenant des liens defecteux : {}
 ------------------------------------------------------------------------------"""
 one_link_message="""CODE HTTP {}\n{}"""
 end_message = """=============================================================================="""
+
+def split_url_domain(url):
+    m = pattern_url.match(url)
+    return m.group('domain')
+def split_url_path(url):
+    m = pattern_url.match(url)
+    return m.group('path')
 
 class Crawler(object):
     """list of HTML Pages to scan for urls"""
@@ -44,10 +50,8 @@ class Crawler(object):
         print 'All links checked', self.checked_links
     def not_checked_yet(self, url):
         """tell if url checked"""
-        mod = slightly_modify(url)
-        for mod_url in mod:
-            if mod_url in self.checked_links or mod_url in self.set_of_urls():
-                return False
+        if url in self.checked_links or url in self.set_of_urls():
+            return False
         return True
     def set_checked(self, url):
         """add url to checked urls"""
@@ -55,27 +59,8 @@ class Crawler(object):
     def __str__(self):
         """crawler simplified output as nb of links already checked, to check"""
         return "({},{})".format(len(self.checked_links),len(self.pages))
-    
-def slightly_modify(url):
-    mod_urls = [url]
-    mod_url = ""
-    if 'http:' in url:
-        mod_url = re.sub('http:','https:',url)
-        mod_urls.append(mod_url)
-    elif 'https:' in url:
-        mod_url = re.sub('https:','http:',url)
-        mod_urls.append(mod_url)
-    if re.search(r'/$',url):
-        mod_urls.append(url[:-1])
-        if mod_url:
-            mod_urls.append(mod_url[:-1])
-    else:
-        mod_urls.append(url+"/")
-        if mod_url:
-            mod_urls.append(url+"/")
-    return mod_urls
 
-class HTMLpage(object): #trop gourmand
+class HTMLpage(object): 
     """HTML page"""
     crawler = Crawler() #static attribute, done only once
     def __init__(self,url):
@@ -90,13 +75,15 @@ class HTMLpage(object): #trop gourmand
             self.code = -2
         else:
             self.code = site.getcode()
+            self.url = site.geturl() #real url after redirections
             self.links = None #list of url present in the html content
             self.bad_links = dict() #dictionnary of bad links urls
-        if self.code<300 and self.code>199:
+        if self.code<300 and self.code>199 and        self.crawler.not_checked_yet(self.url):
+            # test to avoid duplicates
             self.links = self.make_list_of_links(site)
             if self.links:
                 HTMLpage.crawler.add_page(self)
-                print "\tAdded to crawler", self
+#                print "\tAdded to crawler", self
                 
             
     def check(self):
@@ -111,17 +98,17 @@ class HTMLpage(object): #trop gourmand
         
             
     def make_list_of_links(self,site):
-        """make list of links on the page, in form of a generator"""
+        """make list of links on the page"""
         html_content = ""
         for line in skip_comments(site):
             html_content += line
         if self.test_filter(self.url) or self.test_filter(html_content):
-            print "*************", self.url
+#            print "*************", self.url
             p = re.compile('<a\s+.*?href\s*=\s*"(?P<ad>.*?)"') 
             iter_ref = (complete_url(self.url, ref.group('ad'))\
                     for ref in p.finditer(html_content)\
                     if test_url(ref.group('ad')))
-            return [url for url in iter_ref if url and HTMLpage.crawler.not_checked_yet(url) and not hal_intern(url)] 
+            return [url for url in iter_ref if url]
         else:
             return None
     
@@ -136,14 +123,13 @@ class HTMLpage(object): #trop gourmand
         the HTMLpage is added to the crawler list in the call HTMLpage(),
         add dictionary entry if bad link"""
         if self.links:
-            for one_url in self.links: 
-                if one_url not in HTMLpage.crawler.set_of_urls():
-                    #avoid inserting twice the same url
-#                    print "*************", one_url
-                    new_page = HTMLpage(one_url)
-#                    print "*************", new_page
-                    if new_page.code > 299 or new_page.code < 200:
-                        self.bad_links[one_url] = new_page.code
+            for one_url in self.links:
+                # make HTMLpage even if already exists!
+#               print "*************", one_url
+                new_page = HTMLpage(one_url)
+#               print "*************", new_page
+                if new_page.code > 299 or new_page.code < 200:
+                    self.bad_links[one_url] = new_page.code
                 
     def test_filter(self, lines):
         for word in HTMLpage.filter_set:
@@ -155,29 +141,27 @@ class HTMLpage(object): #trop gourmand
         return "({},{})".format(self.url, self.code)
     
 def complete_url(base, new):
-    if b2.match(new): 
-        if base[-1]=='/':
-            return base + new[2:]
+    """return absolute url"""
+    if b2.match(new):
+        if re.search('/$',base):
+            new = base + new[2:]
+            return new
         else:
             return None
     if b1.match(new):
-        base_split = base.split('/');
-        return ('/').join(base_split[:-1])+new
+        base = split_url_domain(base)
+        return base + new[1:]
     return new
                   
 def test_url(url):
-    m1 = pattern_url.match(url)
-    m2 = b1.match(url)
-    m3 = b2.match(url)
-    path = ""
-    if m1:
-        path = m1.group('path')
-        if not path:
-            path = ""
-    elif m2:
-        path = m2.group('path')
-    elif m3:
-        path = m3.group('path')
+    """simple test to identify HTML pages, not working in all cases!"""
+    m = pattern_url.match(url)
+    if not m:
+        m = b1.match(url)
+    if not m:
+        m = b2.match(url)
+    if m:
+        path = m.group('path') if m.group('path') else ""
     else:
         return False
     if '.' not in path:
@@ -186,10 +170,8 @@ def test_url(url):
         return True
     return False
 
-def hal_intern(url):
-    return '//hal.' in url and not hal_end.match(url)
-
 def skip_comments(file):
+    """return generator of lines in the HTML file that are inside the body and not in a comment"""
     in_body = 0
     for line in file:
         if '<body>' in line:
