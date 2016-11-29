@@ -1,6 +1,14 @@
-import urllib2
+from __future__ import print_function
+try:
+    # For Python 3.0 and later
+    from urllib.request import urlopen
+    from urllib.error import  HTTPError, URLError
+except ImportError:
+    # Fall back to Python 2's urllib2
+    from urllib2 import urlopen, HTTPError, URLError
 import re
 import argparse
+
 
 http = re.compile('http://')
 https = re.compile('https://')
@@ -45,9 +53,9 @@ class Crawler(object):
         """entry point for the crawling action"""
         while self.pages:
             page = self.pages.pop()
-            print 'Check', page, self
+            print ('Check', page, self)
             page.check()
-        print 'All links checked', self.checked_links
+        print ('All links checked', self.checked_links)
     def not_checked_yet(self, url):
         """tell if url checked"""
         if url in self.checked_links or url in self.set_of_urls():
@@ -66,10 +74,10 @@ class HTMLpage(object):
     def __init__(self,url):
         self.url = url.strip()
         try:
-            site = urllib2.urlopen(self.url)
-        except urllib2.HTTPError as e:
+            site = urlopen(self.url)
+        except HTTPError as e:
             self.code = e.code
-        except urllib2.URLError:
+        except URLError:
             self.code = -1
         except Exception:
             self.code = -2
@@ -83,7 +91,7 @@ class HTMLpage(object):
             self.links = self.make_list_of_links(site)
             if self.links:
                 HTMLpage.crawler.add_page(self)
-#                print "\tAdded to crawler", self
+#                print ("\tAdded to crawler", self)
                 
             
     def check(self):
@@ -91,20 +99,20 @@ class HTMLpage(object):
         HTMLpage.crawler.set_checked(self.url)
         self.actu_crawler()
         if self.bad_links:
-            print bad_links_message.format(self.url)
+            print (bad_links_message.format(self.url))
             for bl in self.bad_links:
-                print one_link_message.format(self.bad_links[bl], bl)
-            print end_message
+                print (one_link_message.format(self.bad_links[bl], bl))
+            print (end_message)
         
             
     def make_list_of_links(self,site):
         """make list of links on the page"""
         html_content = ""
         for line in skip_comments(site):
-            html_content += line
+            html_content += str(line)
         if self.test_filter(self.url) or self.test_filter(html_content):
-#            print "*************", self.url
-            p = re.compile('<a\s+.*?href\s*=\s*"(?P<ad>.*?)"') 
+            print ("*************", self.url)
+            p = re.compile('<a\s+.*?href\s*=\s*\"(?P<ad>.*?)\"') 
             iter_ref = (complete_url(self.url, ref.group('ad'))\
                     for ref in p.finditer(html_content)\
                     if test_url(ref.group('ad')))
@@ -125,9 +133,9 @@ class HTMLpage(object):
         if self.links:
             for one_url in self.links:
                 # make HTMLpage even if already exists!
-#               print "*************", one_url
+#               print ("*************", one_url)
                 new_page = HTMLpage(one_url)
-#               print "*************", new_page
+#               print ("*************", new_page)
                 if new_page.code > 299 or new_page.code < 200:
                     self.bad_links[one_url] = new_page.code
                 
@@ -174,11 +182,12 @@ def skip_comments(file):
     """return generator of lines in the HTML file that are inside the body and not in a comment"""
     in_body = 0
     for line in file:
-        if '<body>' in line:
+        s_line = str(line)
+        if '<body>' in s_line:
             in_body = 1
-        if '</body>' in line:
+        if '</body>' in s_line:
             in_body = 0
-        if in_body ==1 and not line.strip().startswith('<!--'):
+        if in_body ==1 and not s_line.strip().startswith('<!--'):
             yield line
                         
     
